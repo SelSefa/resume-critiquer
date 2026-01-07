@@ -1,5 +1,7 @@
 import io
 import PyPDF2
+import streamlit as st
+
 
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
@@ -12,8 +14,10 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
 
     return text
 
-def extract_text(uploaded_file) -> str:
-    if uploaded_file.type == "application/pdf":
-        return extract_text_from_pdf(uploaded_file.read())
 
-    return uploaded_file.read().decode("utf-8")
+@st.cache_data(show_spinner=False)
+def cached_extract_text(file_bytes: bytes, file_type: str) -> str:
+    if file_type == "application/pdf":
+        return extract_text_from_pdf(file_bytes)
+
+    return file_bytes.decode("utf-8", errors="ignore")

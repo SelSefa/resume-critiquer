@@ -1,6 +1,6 @@
 import streamlit as st
 
-from app.file_parser import extract_text
+from app.file_parser import cached_extract_text
 from app.prompts import build_resume_prompt
 from app.analyzer import analyze_resume
 
@@ -8,7 +8,7 @@ from app.analyzer import analyze_resume
 def run_app():
     st.set_page_config(
         page_title="Resume Critiquer",
-        page_icon="🗓️",
+        page_icon="📄",
         layout="centered",
     )
 
@@ -30,7 +30,9 @@ def run_app():
 
     if analyze_clicked and uploaded_file:
         try:
-            resume_text = extract_text(uploaded_file)
+            file_bytes = uploaded_file.getvalue()
+            resume_text = cached_extract_text(file_bytes, uploaded_file.type)
+
 
             if not resume_text.strip():
                 st.error("File has no readable content.")
