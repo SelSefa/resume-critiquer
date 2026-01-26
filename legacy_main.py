@@ -1,3 +1,5 @@
+''' 
+
 import streamlit as st
 import PyPDF2
 import io
@@ -67,3 +69,5 @@ if analyze and uploaded_file:
         
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
+
+'''
