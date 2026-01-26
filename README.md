@@ -36,22 +36,46 @@ It supports a credit-based flow to simulate monetization logic (buy credits / wa
 - Logs OpenAI request start/end + usage tokens (when available).
 
 ---
+## Setup (Local)
 
-## Project Structure
+### 1) Install dependencies (uv)
+```bash
+uv sync
+```
+
+### 2) Configure environment variables
+Create a .env file in the project root:
+
+```bash
+OPENAI_API_KEY=your_key_here
+```
+
+### 3) Run the app
+
+```bash
+uv run streamlit run main.py
+```
+
+### Project Structure
 
 ```text
-.
-├── app/
-│   ├── __init__.py
-│   ├── analyzer.py        # OpenAI client call + logging
-│   ├── file_parser.py     # PDF/TXT parsing + size limit + cache
-│   ├── logger.py          # Rotating file logger
-│   ├── precheck.py        # Heuristic resume detection
-│   ├── prompts.py         # Prompt builders
-│   └── ui.py              # Streamlit UI + credit flow
-├── logs/                  # created at runtime
-├── main.py                # entrypoint (loads .env, runs app)
-├── legacy_main.py         # legacy code kept as comments
-├── pyproject.toml
-├── uv.lock
-└── README.md
+app/
+├── __init__.py
+├── analyzer.py     # OpenAI client call + logging
+├── file_parser.py  # PDF/TXT parsing + size limit + cache
+├── logger.py       # Rotating file logger
+├── precheck.py     # Heuristic resume detection
+├── prompts.py      # Prompt builders
+└── ui.py           # Streamlit UI + credit flow
+logs/               # created at runtime
+main.py             # entrypoint (loads .env, runs app)
+legacy_main.py      # legacy code kept as comments
+pyproject.toml
+uv.lock
+README.md
+```
+
+Notes:
+
+- The app expects readable text from the uploaded file (PDF text extraction may vary depending on PDF type).
+- Credits are a simulation layer for feature gating and UI flow.
