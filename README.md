@@ -49,6 +49,7 @@ Create a .env file in the project root:
 ```bash
 OPENAI_API_KEY=your_key_here
 ```
+DEBUG=1
 
 ### 3) Run the app
 
@@ -74,6 +75,18 @@ pyproject.toml
 uv.lock
 README.md
 ```
+
+## Debug mode 
+
+This project has a debug gate controlled by the `DEBUG` environment variable.
+
+- `DEBUG=1` enables debug-only UI blocks:
+  - “Debug details” expander (raw exception + traceback)
+  - “Raw model output (debug)” expander (full LLM output)
+
+- `DEBUG=0` (or unset) disables these blocks.
+
+Use DEBUG only during local development.
 
 Notes:
 
