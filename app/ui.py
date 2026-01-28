@@ -1,5 +1,7 @@
 import streamlit as st
 import re
+import traceback
+import os
 
 from app.precheck import is_probably_resume
 from app.prompts import build_analyze_prompt, build_rewrite_prompt
@@ -12,10 +14,24 @@ def has_enough_credits(cost: int) -> bool:
 def spend_credits(cost: int) -> None:
     st.session_state["credits"] -= cost
 
+CREDIT_POLICY = (
+    "Credits are charged only immediately before an LLM request (Analyze/Rewrite). "
+    "No credits are charged if there is no uploaded file, the precheck fails, or you don't have enough credits. "
+    "If the LLM request fails (network/auth/5xx/etc.), any charged credits are refunded immediately and the UI is updated. "
+    "Pricing: Analyze is free without a target role, role-based Analyze costs 2 credits; Rewrite costs 2 credits (general) or 5 credits (role-targeted)."
+)
+
 PRIMARY_SCORE_RE = re.compile(r"PRIMARY_SCORE\s*:\s*(\d{1,3})", re.IGNORECASE)
 STRUCTURE_SCORE_RE = re.compile(r"STRUCTURE_SCORE\s*:\s*(\d{1,3})", re.IGNORECASE)
 STRUCTURE_NOTE_RE = re.compile(r"STRUCTURE_NOTE\s*:\s*(.*)", re.IGNORECASE)
 PRIMARY_LABEL_RE = re.compile(r"PRIMARY_LABEL\s*:\s*(.*)", re.IGNORECASE)
+
+CONTRACT_LINE_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?(?:`{0,3}|\*{0,2})?"
+    r"(PRIMARY_SCORE|STRUCTURE_SCORE|STRUCTURE_NOTE|PRIMARY_LABEL)\s*:\s*.*$",
+    re.IGNORECASE,
+)
+
 
 def parse_analysis_output(text: str) -> dict:
     primary_score = None
@@ -45,6 +61,53 @@ def parse_analysis_output(text: str) -> dict:
         "structure_note": structure_note,
     }
 
+def clean_analysis_for_ui(text: str) -> str:
+    if not text:
+        return ""
+
+    cleaned_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+
+        if CONTRACT_LINE_RE.match(stripped):
+            continue
+
+        if cleaned_lines and not stripped and not cleaned_lines[-1].strip():
+            continue
+
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines).strip()
+
+
+
+DEBUG = os.getenv("DEBUG", "0").lower() in ("1", "true", "yes", "on")
+
+def show_llm_error(context: str, e: Exception) -> None:
+    raw = str(e) or e.__class__.__name__
+    low = raw.lower()
+
+    if "invalid_api_key" in low or "incorrect api key" in low or "401" in low:
+        user_msg = (
+            "OpenAI authentication failed (invalid/missing API key). "
+            "Check OPENAI_API_KEY in .env and restart Streamlit."
+        )
+    elif "rate limit" in low or "429" in low:
+        user_msg = "OpenAI rate limit exceeded. Please try again later."
+    elif "insufficient_quota" in low or "quota" in low:
+        user_msg = "OpenAI quota/billing issue. Check your OpenAI account."
+    elif "openai_api_key is missing" in low or "api_key is missing" in low:
+        user_msg = ("OPENAI_API_KEY is missing. Set it in your .env file and restart Streamlit.")
+   
+    else:
+        user_msg = f"{context} failed. Please try again."
+
+    st.error(user_msg)
+
+    if DEBUG:
+        with st.expander("Debug details"):
+            st.write(raw)
+            st.code(traceback.format_exc())
 
 def run_app():
     st.set_page_config(
@@ -85,6 +148,21 @@ def run_app():
         credits_main_ph.write(f"Current credits: {credits}")
 
     render_credits()
+
+    def charge_credits(cost: int) -> int:
+        if cost and cost > 0:
+            spend_credits(cost)
+            render_credits()
+            return cost
+        return 0
+    
+    def refund_credits(cost: int) -> None:
+        if cost and cost > 0:
+            st.session_state["credits"] += cost
+            render_credits()
+
+    with st.expander("Credit policy"):
+        st.write(CREDIT_POLICY)
 
     if st.sidebar.button("Buy +10 credits",key="buy_credits_sidebar"):
         st.session_state["credits"] += 10
@@ -172,20 +250,13 @@ def run_app():
                                 job_role=job_role_clean if job_role_clean else None,
                             )
 
-                            charged = 0
-                            
-                            if analyze_cost:
-                                charged = analyze_cost
-                                spend_credits(charged)
-                                render_credits()
+                            charged = charge_credits(analyze_cost)
                             
                             try:
                                 with st.spinner("Analyzing resume..."):
                                     analysis = analyze_resume(prompt, temperature=temperature_analyze)
-                            except Exception as e:
-                                if charged:
-                                    st.session_state["credits"] += charged
-                                    render_credits()
+                            except Exception:
+                                refund_credits(charged)
                                 raise
 
                             parsed = parse_analysis_output(analysis)
@@ -201,7 +272,7 @@ def run_app():
                         f"File too large. Please upload a file smaller than {MAX_UPLOAD_SIZE_MB}MB.")
 
                 except Exception as e:
-                    st.error(f"An error occurred: {e}")
+                    show_llm_error("Analyze", e)
 
         if st.session_state.get("analysis_result"):
             label = st.session_state.get("analysis_label") or "Score"
@@ -218,8 +289,17 @@ def run_app():
                     st.metric("CV Structure Score", f"{structure_score}/100")
                 st.write(structure_note)
 
-            st.markdown("### Analysis Details")
-            st.markdown(st.session_state.get("analysis_result", ""))
+            st.markdown("### Feedback")
+            cleaned = clean_analysis_for_ui(st.session_state.get("analysis_result", ""))
+
+            if cleaned:
+                st.markdown(cleaned)
+            else:
+                st.info("No detailed feedback was returned.")
+
+            if DEBUG:
+                with st.expander("Raw model output (debug)"):
+                    st.code(st.session_state.get("analysis_result", ""))
 
             st.markdown("### Next step")
 
@@ -280,25 +360,22 @@ def run_app():
                             else:
                                 prompt = build_rewrite_prompt(resume_text=resume_text, job_role=job_role)
 
-                                charged = rewrite_cost
-                                spend_credits(charged)
-                                render_credits()
+                                charged = charge_credits(rewrite_cost)
                                 
                                 try:
                                     with st.spinner("Rewriting resume..."):
                                         rewritten = analyze_resume(prompt, temperature=temperature_rewrite)
-                                except Exception as e:
-                                    if charged:
-                                        st.session_state["credits"] += charged
-                                        render_credits()
+                                except Exception:
+                                    refund_credits(charged)
                                     raise
+
                                 st.session_state["rewrite_full"] = rewritten
 
                     except FileTooLargeError:
                         st.error(f"File too large. Please upload a file smaller than {MAX_UPLOAD_SIZE_MB}MB.")
 
                     except Exception as e:
-                        st.error(f"An error occurred: {e}")
+                        show_llm_error("Rewrite", e)
 
             
         if st.session_state.get("rewrite_full"):
