@@ -172,12 +172,21 @@ def run_app():
                                 job_role=job_role_clean if job_role_clean else None,
                             )
 
+                            charged = 0
+                            
                             if analyze_cost:
-                                spend_credits(analyze_cost)
+                                charged = analyze_cost
+                                spend_credits(charged)
                                 render_credits()
                             
-                            with st.spinner("Analyzing resume..."):
-                                analysis = analyze_resume(prompt, temperature=temperature_analyze)
+                            try:
+                                with st.spinner("Analyzing resume..."):
+                                    analysis = analyze_resume(prompt, temperature=temperature_analyze)
+                            except Exception as e:
+                                if charged:
+                                    st.session_state["credits"] += charged
+                                    render_credits()
+                                raise
 
                             parsed = parse_analysis_output(analysis)
 
@@ -271,12 +280,18 @@ def run_app():
                             else:
                                 prompt = build_rewrite_prompt(resume_text=resume_text, job_role=job_role)
 
-                                spend_credits(rewrite_cost)
+                                charged = rewrite_cost
+                                spend_credits(charged)
                                 render_credits()
-
-                                with st.spinner("Rewriting resume..."):
-                                    rewritten = analyze_resume(prompt, temperature=temperature_rewrite)
-
+                                
+                                try:
+                                    with st.spinner("Rewriting resume..."):
+                                        rewritten = analyze_resume(prompt, temperature=temperature_rewrite)
+                                except Exception as e:
+                                    if charged:
+                                        st.session_state["credits"] += charged
+                                        render_credits()
+                                    raise
                                 st.session_state["rewrite_full"] = rewritten
 
                     except FileTooLargeError:
