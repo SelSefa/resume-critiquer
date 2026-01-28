@@ -48,8 +48,9 @@ Create a .env file in the project root:
 
 ```bash
 OPENAI_API_KEY=your_key_here
-```
 DEBUG=1
+```
+
 
 ### 3) Run the app
 
