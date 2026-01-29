@@ -15,11 +15,14 @@ def spend_credits(cost: int) -> None:
     st.session_state["credits"] -= cost
 
 CREDIT_POLICY = (
-    "Credits are charged only immediately before an LLM request (Analyze/Rewrite). "
-    "No credits are charged if there is no uploaded file, the precheck fails, or you don't have enough credits. "
-    "If the LLM request fails (network/auth/5xx/etc.), any charged credits are refunded immediately and the UI is updated. "
-    "Pricing: Analyze is free without a target role, role-based Analyze costs 2 credits; Rewrite costs 2 credits (general) or 5 credits (role-targeted)."
+    """
+    Pricing:
+    - Analyze is free without a target role.
+    - Role-based Analyze costs 2 credits.
+    - Rewrite costs 2 credits (general) or 5 credits (role-targeted).
+    """
 )
+
 
 PRIMARY_SCORE_RE = re.compile(r"PRIMARY_SCORE\s*:\s*(\d{1,3})", re.IGNORECASE)
 STRUCTURE_SCORE_RE = re.compile(r"STRUCTURE_SCORE\s*:\s*(\d{1,3})", re.IGNORECASE)
@@ -160,6 +163,16 @@ def run_app():
         if cost and cost > 0:
             st.session_state["credits"] += cost
             render_credits()
+        
+    def run_llm_with_credits(context: str, cost: int, spinner_text: str, fn) -> object | None:
+        charged = charge_credits(cost)
+        try:
+            with st.spinner(spinner_text):
+                return fn()
+        except Exception as e:
+            refund_credits(charged)
+            show_llm_error(context, e)
+            return None
 
     with st.expander("Credit policy"):
         st.write(CREDIT_POLICY)
@@ -210,7 +223,8 @@ def run_app():
         
         if analyze_cost:
             st.caption("Role based analysis costs 2 credits")
-
+        else:
+            st.caption("General analysis is free (0 credits)")
         
         temperature_analyze = st.slider(
             "Analyze temperature",
@@ -250,22 +264,24 @@ def run_app():
                                 job_role=job_role_clean if job_role_clean else None,
                             )
 
-                            charged = charge_credits(analyze_cost)
-                            
-                            try:
-                                with st.spinner("Analyzing resume..."):
-                                    analysis = analyze_resume(prompt, temperature=temperature_analyze)
-                            except Exception:
-                                refund_credits(charged)
-                                raise
+                            def _do_analyze():
+                                analysis = analyze_resume(prompt, temperature=temperature_analyze)
+                                parsed = parse_analysis_output(analysis)
+                                return analysis, parsed
 
-                            parsed = parse_analysis_output(analysis)
+                            result = run_llm_with_credits("Analyze", analyze_cost, "Analyzing resume...", _do_analyze)
 
-                            st.session_state["analysis_result"] = analysis
-                            st.session_state["analysis_score"] = parsed["primary_score"]
-                            st.session_state["analysis_label"] = parsed["primary_label"]
-                            st.session_state["analysis_structure_score"] = parsed["structure_score"]
-                            st.session_state["analysis_structure_note"] = parsed["structure_note"]
+                            if result is not None:
+                                analysis, parsed = result
+
+                                st.session_state["analysis_result"] = analysis
+                                st.session_state["analysis_score"] = parsed["primary_score"]
+                                st.session_state["analysis_label"] = parsed["primary_label"]
+                                st.session_state["analysis_structure_score"] = parsed["structure_score"]
+                                st.session_state["analysis_structure_note"] = parsed["structure_note"]
+                                
+                                st.success("Analysis completed. Scroll down to see feedback and next steps.")
+
                         
                 except FileTooLargeError:
                     st.error(
@@ -308,21 +324,30 @@ def run_app():
             with col1:
                 if st.button("Professional Rewrite (2 credits)", key="cta_prof_rewrite"):
                     st.session_state["job_role_rewrite"] = ""
-                    st.info("Go to the Rewrite tab and click Rewrite Resume.")
+                    st.info("Next: open the Rewrite tab → click 'Rewrite Resume' (cost: 2 credits).")
+
 
             with col2:
-                if st.button("Role-targeted Rewrite (5 credits)", key="cta_role_rewrite"):
+                if st.button(
+                    "Role-targeted Rewrite (5 credits)",
+                    key="cta_role_rewrite",
+                    disabled=not bool(job_role_clean),
+                ):
                     st.session_state["job_role_rewrite"] = job_role_clean
-                    if not job_role_clean:
-                        st.warning("Enter a target job role to use Role-targeted Rewrite.")
-                    else:
-                        st.info("Go to the Rewrite tab and click Rewrite Resume.")
+                    st.info("Next: open the Rewrite tab → review the pre-filled target role → click 'Rewrite Resume' (cost: 5 credits).")
 
-
+            if not job_role_clean:
+                st.caption("Enter a target job role to use Role-targeted Rewrite.")
 
     with tab_rewrite:
         st.subheader("Rewrite")
         job_role = st.text_input("Target job role (optional)", key="job_role_rewrite")
+        
+        job_role_rewrite_clean = (job_role or "").strip()
+        rewrite_cost = 5 if job_role_rewrite_clean else 2
+        st.caption(f"Rewrite will cost {rewrite_cost} credits ({'role-targeted' if job_role_rewrite_clean else 'general'}).")
+
+
         temperature_rewrite = st.slider(
             "Rewrite temperature",
             min_value=0.0,
@@ -339,7 +364,6 @@ def run_app():
                 st.warning("Please upload your resume (PDF or TXT) first.")
 
             else:
-                rewrite_cost = 5 if (job_role or "").strip() else 2
 
                 if not has_enough_credits(rewrite_cost):
                     st.error("You don't have enough credits to rewrite a resume.")
@@ -360,16 +384,15 @@ def run_app():
                             else:
                                 prompt = build_rewrite_prompt(resume_text=resume_text, job_role=job_role)
 
-                                charged = charge_credits(rewrite_cost)
-                                
-                                try:
-                                    with st.spinner("Rewriting resume..."):
-                                        rewritten = analyze_resume(prompt, temperature=temperature_rewrite)
-                                except Exception:
-                                    refund_credits(charged)
-                                    raise
+                                def _do_rewrite():
+                                    return analyze_resume(prompt, temperature=temperature_rewrite)
 
-                                st.session_state["rewrite_full"] = rewritten
+                                rewritten = run_llm_with_credits("Rewrite", rewrite_cost, "Rewriting resume...", _do_rewrite)
+
+                                if rewritten is not None:
+                                    st.session_state["rewrite_full"] = rewritten
+                                    st.success("Rewrite completed. See the rewritten resume below.")
+
 
                     except FileTooLargeError:
                         st.error(f"File too large. Please upload a file smaller than {MAX_UPLOAD_SIZE_MB}MB.")
