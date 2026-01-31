@@ -1,4 +1,4 @@
-# Resume Critiquer (Streamlit + OpenAI)
+# Resume Critiquer (Streamlit + OpenAI)  
 
 A minimal Streamlit app that critiques resumes (CVs) and optionally rewrites them in a more professional format.  
 It supports a credit-based flow to simulate monetization logic (buy credits / watch ad), and includes a lightweight precheck to prevent non-resume documents from being processed.
@@ -93,3 +93,4 @@ Notes:
 
 - The app expects readable text from the uploaded file (PDF text extraction may vary depending on PDF type).
 - Credits are a simulation layer for feature gating and UI flow.
+
